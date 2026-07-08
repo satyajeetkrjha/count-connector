@@ -1,0 +1,122 @@
+# ============================================================================
+# otel-gateway — default values
+# ============================================================================
+# Gateway (centralized processing) tier of the Gateway Collector Pattern.
+#   Agent (receiver_creator) --OTLP--> Gateway --remote_write--> Prometheus
+# ============================================================================
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.145.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# Command-line args passed to the collector container.
+command:
+  extraArgs: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  # The gateway does not need Kubernetes API access by default.
+  create: false
+
+podAnnotations: {}
+podLabels: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Container/exposed ports.
+ports:
+  otlpGrpc: 4317
+  otlpHttp: 4318
+  health: 13133
+  pprof: 1777
+
+service:
+  type: ClusterIP
+  annotations: {}
+
+# Liveness/readiness probes hit the health_check extension.
+probes:
+  enabled: true
+
+# --------------------------------------------------------------------------
+# Prometheus remote-write destination
+# --------------------------------------------------------------------------
+prometheus:
+  remoteWriteEndpoint: "http://kps-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
+  # Expose resource attributes as Prometheus labels
+  resourceToTelemetryConversion: true
+  tlsInsecure: true
+
+# --------------------------------------------------------------------------
+# Processing knobs
+# --------------------------------------------------------------------------
+processors:
+  memoryLimiter:
+    limitMib: 400
+    spikeLimitMib: 100
+    checkInterval: 1s
+  batch:
+    timeout: 10s
+    sendBatchSize: 1024
+    sendBatchMaxSize: 2048
+  # Environment-level resource attributes stamped on all telemetry.
+  resourceAttributes:
+    deployment.environment: kind-lab
+    collector.tier: gateway
+
+# --------------------------------------------------------------------------
+# metricCounting — COUNT-IN-GATEWAY, THEN-DROP mode.
+# --------------------------------------------------------------------------
+# The agent forwards ALL raw metrics untouched. The gateway then:
+#   1. counts the receiver_creator data points (count connector) per job/rule,
+#   2. drops the raw receiver_creator metrics (filter on discovered.by), and
+#   3. sends only the small count metric to Prometheus.
+# Set enabled=false to make the gateway a plain pass-through.
+metricCounting:
+  enabled: true
+  # Name of the count metric emitted to Prometheus (also used by the filter to
+  # decide which metric to KEEP while dropping the raw receiver_creator series).
+  metricName: receiver_creator_datapoint_count
+  description: "Count of metric data points discovered per receiver_creator job/rule"
+  # Attributes copied onto the count metric so it is queryable per job/rule.
+  dimensions:
+    - key: service.name
+      defaultValue: unknown_job
+    - key: discovery.method
+      defaultValue: unknown_rule
+    - key: k8s.pod.name
+      defaultValue: unknown_pod
+
+
+# Enable the verbose debug exporter (useful in labs, disable in prod).
+debug:
+  enabled: true
+  verbosity: normal
+
+
+# --------------------------------------------------------------------------
+# Advanced: fully override the generated collector config.
+# When set (non-empty), this string is used verbatim as the collector config
+# and all of the templated config above is ignored.
+# --------------------------------------------------------------------------
+collectorConfigOverride: ""
