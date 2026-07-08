@@ -59,7 +59,7 @@ data:
         error_mode: ignore
         metrics:
           metric:
-            - 'resource.attributes["discovered.by"] == "receiver-creator" and name != {{ .Values.metricCounting.metricName | quote }}'
+            - 'resource.attributes["metric.source"] == "receiver-creator" and name != {{ .Values.metricCounting.metricName | quote }}'
       {{- end }}
 
     {{- if and .Values.metricCounting .Values.metricCounting.enabled }}
