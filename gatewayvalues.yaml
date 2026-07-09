@@ -98,6 +98,14 @@ metricCounting:
   # decide which metric to KEEP while dropping the raw receiver_creator series).
   metricName: receiver_creator_datapoint_count
   description: "Count of metric data points discovered per receiver_creator job/rule"
+  # Metrics whose name starts with this prefix are NOT dropped by the raw-drop
+  # filter, so Task 3 (id-based) filtering is their sole gate. Keeps Task 2
+  # (count-and-drop) and Task 3 (id block-list) cleanly independent. The Task 3
+  # apps emit metric names app_up / app_requests_total / app_latency_seconds,
+  # so the carve-out prefix is "app_". Set to "" to disable the carve-out.
+  keepMetricPrefix: "app_"
+
+
   # Attributes copied onto the count metric so it is queryable per job/rule.
   dimensions:
     - key: service.name
@@ -108,10 +116,31 @@ metricCounting:
       defaultValue: unknown_pod
 
 
+# --------------------------------------------------------------------------
+# idFilter — Task 3: block metrics by application id AT THE GATEWAY.
+# --------------------------------------------------------------------------
+# 10 apps (id=100..109) emit metrics that flow: app -> agent -> gateway.
+# Every series carries the label/attribute id="10X". This gateway-side filter
+# drops all metric data points whose id is in `blockedIds` so they never reach
+# Prometheus. This is independent of receiver_creator — it keys purely on the
+# id metric attribute. Edit `blockedIds` to change policy; nothing else needed.
+idFilter:
+  enabled: true
+  # Metric datapoint attribute that carries the application id.
+  attribute: id
+  # Ids whose metrics must NOT reach Prometheus (dropped at the gateway).
+  blockedIds:
+    - "100"
+    - "102"
+    - "104"
+
+
+
 # Enable the verbose debug exporter (useful in labs, disable in prod).
 debug:
   enabled: true
   verbosity: normal
+
 
 
 # --------------------------------------------------------------------------
