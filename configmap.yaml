@@ -55,12 +55,36 @@ data:
       # KEEPING the count metric the count connector emits. So the agent forwards
       # everything untouched; the gateway is where the raw high-cardinality
       # receiver_creator data points are counted AND then dropped.
+      # NOTE: metrics whose name starts with keepMetricPrefix (Task 3 apps use
+      # the "task3_" prefix) are intentionally NOT dropped here, so the Task 3
+      # id-based filter is their SOLE gate — keeping the two features cleanly
+      # independent even though both traverse the gateway.
       filter/drop_receiver_creator_raw:
         error_mode: ignore
         metrics:
           metric:
-            - 'resource.attributes["metric.source"] == "receiver-creator" and name != {{ .Values.metricCounting.metricName | quote }}'
+            - 'resource.attributes["discovered.by"] == "receiver-creator" and name != {{ .Values.metricCounting.metricName | quote }}{{ if .Values.metricCounting.keepMetricPrefix }} and not IsMatch(name, {{ printf "^%s" .Values.metricCounting.keepMetricPrefix | quote }}){{ end }}'
       {{- end }}
+
+
+      {{- if and .Values.idFilter .Values.idFilter.enabled }}
+      # ----------------------------------------------------------------------
+      # Task 3: block metrics by application id AT THE GATEWAY.
+      # Drops every metric DATA POINT whose attribute `id` is in the block-list
+      # (values.yaml -> idFilter.blockedIds). Uses `datapoint` (not `metric`)
+      # so it evaluates per-series, and each id is OR-ed together. Independent
+      # of receiver_creator — keys only on the id attribute.
+      # ----------------------------------------------------------------------
+      filter/drop_blocked_ids:
+        error_mode: ignore
+        metrics:
+          datapoint:
+            {{- $attr := .Values.idFilter.attribute }}
+            {{- range .Values.idFilter.blockedIds }}
+            - 'attributes[{{ $attr | quote }}] == {{ . | quote }}'
+            {{- end }}
+      {{- end }}
+
 
     {{- if and .Values.metricCounting .Values.metricCounting.enabled }}
     connectors:
@@ -115,13 +139,15 @@ data:
         #    go to Prometheus.
         metrics/out:
           receivers: [otlp, count]
-          processors: [memory_limiter, filter/drop_receiver_creator_raw, deltatocumulative, resource/gateway, batch]
+          processors: [memory_limiter, {{ if and .Values.idFilter .Values.idFilter.enabled }}filter/drop_blocked_ids, {{ end }}filter/drop_receiver_creator_raw, deltatocumulative, resource/gateway, batch]
           exporters: [prometheusremotewrite{{ if .Values.debug.enabled }}, debug{{ end }}]
       {{- else }}
-        # Plain pass-through: everything the agents send goes to Prometheus.
+        # Plain pass-through: everything the agents send goes to Prometheus
+        # (except ids blocked by idFilter, if enabled).
         metrics:
           receivers: [otlp]
-          processors: [memory_limiter, resource/gateway, batch]
+          processors: [memory_limiter, {{ if and .Values.idFilter .Values.idFilter.enabled }}filter/drop_blocked_ids, {{ end }}resource/gateway, batch]
           exporters: [prometheusremotewrite{{ if .Values.debug.enabled }}, debug{{ end }}]
       {{- end }}
+
 {{- end }}
